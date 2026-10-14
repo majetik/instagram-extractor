@@ -28,8 +28,9 @@
   .chip { border: 1px solid var(--line); background: var(--chip); color: var(--text); border-radius: 999px; padding: 4px 10px; font: inherit; font-size: 12.5px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
   .chip[aria-pressed="false"] { opacity: .45; }
   .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex: none; }
-  label.toggle { display: flex; gap: 6px; align-items: center; color: var(--muted); font-size: 12.5px; }
-  label.toggle input { width: auto; }
+  #approx { justify-self: start; white-space: nowrap; }
+  #approx[data-mode="only"] { border-color: #d97706; background: #fef3c7; color: #92400e; }
+  #approx[data-mode="hide"] { text-decoration: line-through; opacity: .55; }
   ul { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; }
   li { padding: 12px 18px; border-bottom: 1px solid var(--line); cursor: pointer; }
   ul { -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
@@ -73,7 +74,7 @@
         <input id="q" type="search" placeholder="Search name, city, details…">
         <select id="country"><option value="">All countries</option></select>
         <div class="chips" id="chips"></div>
-        <label class="toggle"><input type="checkbox" id="approx" checked> Approximate pins</label>
+        <button class="chip" id="approx" data-mode="all" title="Click to cycle: all pins → only approximate → hide approximate">Approximate pins: shown</button>
       </div>
     </header>
     <ul id="list"></ul>
@@ -119,6 +120,17 @@ for (const [key, g] of Object.entries(GROUPS)) {
 const countrySel = document.getElementById("country");
 [...new Set(PLACES.map(p => p.country).filter(Boolean))].sort().forEach(c => countrySel.add(new Option(c, c)));
 
+// Cycles: all places -> only approximate ones -> approximate ones hidden -> all
+const approxBtn = document.getElementById("approx");
+const APPROX_NEXT = { all: "only", only: "hide", hide: "all" };
+const APPROX_LABEL = { all: "shown", only: "only", hide: "hidden" };
+approxBtn.onclick = () => {
+  const mode = APPROX_NEXT[approxBtn.dataset.mode];
+  approxBtn.dataset.mode = mode;
+  approxBtn.textContent = "Approximate pins: " + APPROX_LABEL[mode];
+  render();
+};
+
 function popup(p) {
   return `<div class="pop"><h3>${esc(p.name)}</h3>
     <div class="meta">${esc(p.category)} · ${esc(where(p))} ${p.precision === "approximate" ? '<span class="approx">approx. location</span>' : ""}</div>
@@ -141,13 +153,15 @@ const markers = PLACES.map(p => {
 function render() {
   const q = document.getElementById("q").value.trim().toLowerCase();
   const country = countrySel.value;
-  const showApprox = document.getElementById("approx").checked;
+  const approxMode = approxBtn.dataset.mode;
   const visible = [];
   cluster.clearLayers();
   PLACES.forEach((p, i) => {
     if (!active.has(groupOf(p.category))) return;
     if (country && p.country !== country) return;
-    if (!showApprox && p.precision === "approximate") return;
+    const isApprox = p.precision === "approximate";
+    if (approxMode === "only" && !isApprox) return;
+    if (approxMode === "hide" && isApprox) return;
     if (q && ![p.name, p.city, p.country, p.neighborhood, p.details, p.category, p.post_author].join(" ").toLowerCase().includes(q)) return;
     visible.push(i);
     if (markers[i]) cluster.addLayer(markers[i]);
@@ -170,7 +184,7 @@ document.getElementById("list").addEventListener("click", e => {
   if (m) cluster.zoomToShowLayer(m, () => m.openPopup());
   else window.open(p.post_url, "_blank");
 });
-["q", "country", "approx"].forEach(id => document.getElementById(id).addEventListener("input", render));
+["q", "country"].forEach(id => document.getElementById(id).addEventListener("input", render));
 
 render();
 const pts = markers.filter(Boolean).map(m => m.getLatLng());
