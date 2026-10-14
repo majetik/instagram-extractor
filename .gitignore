@@ -1,0 +1,10 @@
+# Private: Instagram session, cookies, fetched posts, transcripts
+data/
+# Personal results
+output/
+# GitHub Pages site is its own repo
+site/
+.env
+.venv/
+__pycache__/
+*.pyc

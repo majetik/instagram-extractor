@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Saved Places Map</title>
+<style>__VENDOR_CSS__</style>
+<style>
+  :root {
+    --bg: #fbfaf8; --panel: #ffffff; --text: #1d1c1a; --muted: #6b6862; --line: #e7e4de;
+    --chip: #f1efea; --accent: #c2410c;
+    --food: #ea580c; --shop: #7c3aed; --stay: #2563eb; --sight: #dc2626; --nature: #16a34a; --area: #64748b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161513; --panel: #1f1e1b; --text: #eeece8; --muted: #a29e96; --line: #33312d; --chip: #2a2925; --accent: #fb923c; }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .app { display: flex; height: 100%; }
+  aside { width: 360px; flex: none; display: flex; flex-direction: column; background: var(--panel); border-right: 1px solid var(--line); }
+  header { padding: 16px 16px 10px; border-bottom: 1px solid var(--line); }
+  h1 { font-size: 17px; margin: 0 0 2px; }
+  .count { color: var(--muted); font-size: 13px; }
+  .filters { display: grid; gap: 8px; margin-top: 12px; }
+  input, select { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); font: inherit; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { border: 1px solid var(--line); background: var(--chip); color: var(--text); border-radius: 999px; padding: 4px 10px; font: inherit; font-size: 12.5px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+  .chip[aria-pressed="false"] { opacity: .45; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex: none; }
+  label.toggle { display: flex; gap: 6px; align-items: center; color: var(--muted); font-size: 12.5px; }
+  label.toggle input { width: auto; }
+  ul { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1; }
+  li { padding: 10px 16px; border-bottom: 1px solid var(--line); cursor: pointer; }
+  li:hover { background: var(--chip); }
+  li .name { font-weight: 600; display: flex; gap: 8px; align-items: center; }
+  li .where { color: var(--muted); font-size: 12.5px; }
+  li .details { font-size: 12.5px; margin-top: 2px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  li.nomap .name::after { content: "not on map"; font-weight: 400; font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+  #map { flex: 1; }
+  .leaflet-popup-content { font: 13px/1.45 system-ui, sans-serif; min-width: 220px; }
+  .pop h3 { margin: 0 0 2px; font-size: 15px; }
+  .pop .meta { color: #6b6862; font-size: 12px; margin-bottom: 6px; }
+  .pop .links { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-top: 8px; }
+  .pop a { color: #c2410c; font-weight: 600; text-decoration: none; }
+  .approx { font-size: 11px; color: #92400e; background: #fef3c7; border-radius: 4px; padding: 1px 5px; }
+  @media (max-width: 760px) {
+    .app { flex-direction: column-reverse; }
+    aside { width: 100%; height: 45%; border-right: 0; border-top: 1px solid var(--line); }
+    #map { flex: none; height: 55%; }
+    header { padding: 12px 16px 8px; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside>
+    <header>
+      <h1>Saved places</h1>
+      <div class="count" id="count"></div>
+      <div class="filters">
+        <input id="q" type="search" placeholder="Search name, city, details…">
+        <select id="country"><option value="">All countries</option></select>
+        <div class="chips" id="chips"></div>
+        <label class="toggle"><input type="checkbox" id="approx" checked> Include approximate (city-level) pins</label>
+      </div>
+    </header>
+    <ul id="list"></ul>
+  </aside>
+  <div id="map"></div>
+</div>
+<script>__VENDOR_JS__</script>
+<script>
+const PLACES = __PLACES_JSON__;
+
+const GROUPS = {
+  food:   { label: "Food & drink", cats: ["restaurant", "cafe", "bar", "bakery"] },
+  shop:   { label: "Shopping",     cats: ["shop", "market"] },
+  stay:   { label: "Stay",         cats: ["hotel"] },
+  sight:  { label: "Sights",       cats: ["attraction", "museum", "viewpoint"] },
+  nature: { label: "Nature",       cats: ["beach", "nature", "park"] },
+  area:   { label: "Areas & other", cats: ["neighborhood", "city", "other"] },
+};
+const css = getComputedStyle(document.documentElement);
+const groupOf = c => Object.keys(GROUPS).find(g => GROUPS[g].cats.includes(c)) || "area";
+const colorOf = c => css.getPropertyValue("--" + groupOf(c)).trim();
+const esc = s => String(s ?? "").replace(/[&<>"]/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[ch]));
+const where = p => [p.neighborhood, p.city, p.country].filter(Boolean).join(", ");
+
+const map = L.map("map", { worldCopyJump: true }).setView([20, 0], 2);
+L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  maxZoom: 19, attribution: "&copy; OpenStreetMap contributors",
+}).addTo(map);
+const cluster = L.markerClusterGroup({ maxClusterRadius: 45 });
+map.addLayer(cluster);
+
+const active = new Set(Object.keys(GROUPS));
+const chips = document.getElementById("chips");
+for (const [key, g] of Object.entries(GROUPS)) {
+  const n = PLACES.filter(p => groupOf(p.category) === key).length;
+  if (!n) continue;
+  const b = document.createElement("button");
+  b.className = "chip"; b.setAttribute("aria-pressed", "true");
+  b.innerHTML = `<span class="dot" style="background:var(--${key})"></span>${g.label} <span style="opacity:.6">${n}</span>`;
+  b.onclick = () => { active.has(key) ? active.delete(key) : active.add(key); b.setAttribute("aria-pressed", active.has(key)); render(); };
+  chips.appendChild(b);
+}
+const countrySel = document.getElementById("country");
+[...new Set(PLACES.map(p => p.country).filter(Boolean))].sort().forEach(c => countrySel.add(new Option(c, c)));
+
+function popup(p) {
+  return `<div class="pop"><h3>${esc(p.name)}</h3>
+    <div class="meta">${esc(p.category)} · ${esc(where(p))} ${p.precision === "approximate" ? '<span class="approx">approx. location</span>' : ""}</div>
+    ${p.details ? `<div>${esc(p.details)}</div>` : ""}
+    ${p.found_address ? `<div class="meta" style="margin-top:6px">${esc(p.found_address)}</div>` : ""}
+    <div class="links">${(p.post_urls || [p.post_url]).map((u, i, a) =>
+      `<a href="${esc(u)}" target="_blank" rel="noopener">${a.length > 1 ? `Post ${i + 1}` : "Instagram post"} ↗</a>`).join("")}
+    <a href="${esc(p.maps_url)}" target="_blank" rel="noopener">Google Maps ↗</a></div></div>`;
+}
+
+const markers = PLACES.map(p => {
+  if (p.lat == null) return null;
+  const approx = p.precision === "approximate";
+  return L.circleMarker([p.lat, p.lng], {
+    radius: approx ? 6 : 8, color: colorOf(p.category), weight: 2,
+    fillColor: colorOf(p.category), fillOpacity: approx ? 0.15 : 0.85, dashArray: approx ? "3 3" : null,
+  }).bindPopup(popup(p));
+});
+
+function render() {
+  const q = document.getElementById("q").value.trim().toLowerCase();
+  const country = countrySel.value;
+  const showApprox = document.getElementById("approx").checked;
+  const visible = [];
+  cluster.clearLayers();
+  PLACES.forEach((p, i) => {
+    if (!active.has(groupOf(p.category))) return;
+    if (country && p.country !== country) return;
+    if (!showApprox && p.precision === "approximate") return;
+    if (q && ![p.name, p.city, p.country, p.neighborhood, p.details, p.category, p.post_author].join(" ").toLowerCase().includes(q)) return;
+    visible.push(i);
+    if (markers[i]) cluster.addLayer(markers[i]);
+  });
+  const list = document.getElementById("list");
+  list.innerHTML = visible.map(i => {
+    const p = PLACES[i];
+    return `<li data-i="${i}" class="${p.lat == null ? "nomap" : ""}">
+      <div class="name"><span class="dot" style="background:${colorOf(p.category)}"></span>${esc(p.name)}</div>
+      <div class="where">${esc(p.category)} · ${esc(where(p))}</div>
+      ${p.details ? `<div class="details">${esc(p.details)}</div>` : ""}</li>`;
+  }).join("");
+  const onMap = visible.filter(i => markers[i]).length;
+  document.getElementById("count").textContent = `${visible.length} places · ${onMap} on the map`;
+}
+
+document.getElementById("list").addEventListener("click", e => {
+  const li = e.target.closest("li"); if (!li) return;
+  const p = PLACES[+li.dataset.i], m = markers[+li.dataset.i];
+  if (m) cluster.zoomToShowLayer(m, () => m.openPopup());
+  else window.open(p.post_url, "_blank");
+});
+["q", "country", "approx"].forEach(id => document.getElementById(id).addEventListener("input", render));
+
+render();
+const pts = markers.filter(Boolean).map(m => m.getLatLng());
+const fitAll = () => {
+  map.invalidateSize();  // the container may have resized after Leaflet first measured it
+  if (pts.length) map.fitBounds(L.latLngBounds(pts).pad(0.1), { maxZoom: 12 });
+};
+fitAll();
+window.addEventListener("load", () => setTimeout(fitAll, 50));
+window.addEventListener("resize", () => map.invalidateSize());
+</script>
+</body>
+</html>

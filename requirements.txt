@@ -1,0 +1,7 @@
+﻿anthropic
+pydantic>=2
+python-dotenv
+requests
+playwright
+yt-dlp
+faster-whisper
